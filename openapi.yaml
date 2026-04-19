@@ -1,0 +1,1267 @@
+openapi: 3.1.0
+
+info:
+  title: Pizza Ordering API
+  version: 1.0.0
+  description: |
+    REST API for the Pizza Ordering app, served by **PostgREST** directly from
+    the PostgreSQL `api` schema.
+
+    ### Base URL
+    ```
+    http://localhost:3000
+    ```
+
+    ### Authentication
+    Requests that require a logged-in user must include a signed **JWT** in the
+    `Authorization` header. The JWT payload must contain:
+
+    | Claim  | Type   | Description |
+    |--------|--------|-------------|
+    | `role` | string | `customer` or `staff` |
+    | `sub`  | string | The user's UUID (`users.id`) |
+
+    Sign with the value of `JWT_SECRET` (default in development:
+    `super-secret-jwt-key-change-in-production`).
+
+    Anonymous requests (no token) are served under the `web_anon` role and
+    have read-only access to public data.
+
+    ### PostgREST filtering
+    All `GET` endpoints on views support PostgREST query-string operators:
+
+    | Operator | Meaning | Example |
+    |----------|---------|---------|
+    | `eq`  | equals              | `?category=eq.classic` |
+    | `neq` | not equals          | `?is_available=neq.false` |
+    | `gt`  | greater than        | `?base_price=gt.15` |
+    | `lt`  | less than           | `?base_price=lt.20` |
+    | `like`| SQL LIKE            | `?name=like.*prawn*` |
+    | `ilike` | case-insensitive  | `?name=ilike.*chicken*` |
+    | `in`  | in list             | `?status=in.(pending,processing)` |
+
+    Pagination: `?limit=20&offset=0`
+    Ordering:   `?order=created_at.desc`
+    Column selection: `?select=id,name,base_price`
+
+servers:
+  - url: http://localhost:3000
+    description: Local development (Docker Compose)
+
+tags:
+  - name: Auth
+    description: Sign up and sign in — returns a JWT for use as a Bearer token
+  - name: Menu
+    description: Browse the pizza menu and variants
+  - name: Stores
+    description: Store locations and opening hours
+  - name: Orders
+    description: Place and track orders (customer)
+  - name: Back of House
+    description: Order queue management (staff only)
+  - name: Audit
+    description: Audit trail (staff only)
+
+# ---------------------------------------------------------------------------
+# Security scheme
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT signed with `JWT_SECRET`.
+        Payload must include `role` (`customer` | `staff`) and `sub` (user UUID).
+
+  # -------------------------------------------------------------------------
+  # Reusable schemas
+  # -------------------------------------------------------------------------
+  schemas:
+
+    MenuItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        category:
+          type: string
+          enum: [starter, classic, vegetarian, special]
+          example: classic
+        name:
+          type: string
+          example: Margherita
+        description:
+          type: string
+          nullable: true
+          example: San Marzano tomato, fior di latte mozzarella, fresh basil, extra virgin olive oil
+        base_price:
+          type: number
+          format: float
+          example: 15.00
+        is_available:
+          type: boolean
+          example: true
+
+    MenuVariant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        menu_item_id:
+          type: string
+          format: uuid
+        size:
+          type: string
+          enum: [personal, small, medium, large, xl]
+          example: large
+        base:
+          type: string
+          enum: [classic, thin, thick, stuffed_crust, gluten_free]
+          example: thin
+        price:
+          type: number
+          format: float
+          example: 25.00
+
+    Store:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Slices – Surry Hills
+        address:
+          type: string
+          example: 142 Crown St, Surry Hills NSW 2010
+        suburb:
+          type: string
+          example: Surry Hills
+        postcode:
+          type: string
+          example: "2010"
+        phone:
+          type: string
+          nullable: true
+          example: (02) 9111 0001
+        is_active:
+          type: boolean
+          example: true
+        is_open_now:
+          type: boolean
+          description: Evaluated in Australia/Sydney timezone at request time
+          example: true
+
+    StoreHours:
+      type: object
+      properties:
+        store_id:
+          type: string
+          format: uuid
+        store_name:
+          type: string
+          example: Slices – Newtown
+        day_of_week:
+          type: integer
+          minimum: 1
+          maximum: 7
+          description: ISODOW — 1=Monday, 7=Sunday
+          example: 5
+        opens:
+          type: string
+          pattern: '^\d{2}:\d{2}$'
+          example: "11:00"
+        closes:
+          type: string
+          pattern: '^\d{2}:\d{2}$'
+          example: "23:00"
+        is_closed:
+          type: boolean
+          description: True when the store is closed this day (e.g. public holiday)
+          example: false
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        store_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, processed, cancelled]
+          example: pending
+        delivery_address:
+          type: string
+          nullable: true
+          example: 12 Riley St, Surry Hills NSW 2010
+        total_amount:
+          type: number
+          format: float
+          example: 47.50
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for starters; set for pizzas to capture size + base
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+        unit_price:
+          type: number
+          format: float
+          example: 25.00
+        notes:
+          type: string
+          nullable: true
+          example: Extra chilli please
+
+    PlaceOrderItem:
+      type: object
+      required: [item_id]
+      properties:
+        item_id:
+          type: string
+          format: uuid
+          description: UUID of the menu item
+        variant_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Required for pizzas to select a size + base combination
+        quantity:
+          type: integer
+          minimum: 1
+          default: 1
+        notes:
+          type: string
+          nullable: true
+          description: Special instructions for this line item
+
+    NearbyStore:
+      type: object
+      properties:
+        store_id:
+          type: string
+          format: uuid
+        store_name:
+          type: string
+          example: Slices – Newtown
+        address:
+          type: string
+          example: 301 King St, Newtown NSW 2042
+        distance_m:
+          type: number
+          format: float
+          description: Distance in metres from the centre of the requested suburb
+          example: 842.3
+
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        occurred_at:
+          type: string
+          format: date-time
+        db_user:
+          type: string
+          example: postgres
+        app_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        app_role:
+          type: string
+          nullable: true
+          example: customer
+        schema_name:
+          type: string
+          example: internal
+        table_name:
+          type: string
+          example: orders
+        operation:
+          type: string
+          enum: [INSERT, UPDATE, DELETE, TRUNCATE]
+        old_data:
+          type: object
+          nullable: true
+          description: Row snapshot before the change (null for INSERT)
+        new_data:
+          type: object
+          nullable: true
+          description: Row snapshot after the change (null for DELETE)
+        changed_cols:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: Column names that changed (UPDATE only)
+        txid:
+          type: integer
+          format: int64
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: HS256-signed JWT. Include as `Authorization: Bearer <token>` on subsequent requests. Expires after 24 hours.
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user_id:
+          type: string
+          format: uuid
+          example: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+        role:
+          type: string
+          enum: [customer, staff]
+          description: Present on login responses; omitted from signup (always `customer`).
+          example: customer
+
+    AuthLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        occurred_at:
+          type: string
+          format: date-time
+        event_type:
+          type: string
+          enum: [signup, login_success, login_failure]
+        email:
+          type: string
+          format: email
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for login_failure events
+        ip_addr:
+          type: string
+          nullable: true
+          description: Client IP at time of request
+        details:
+          type: object
+          nullable: true
+          description: Extra context (e.g. `{"error":"email_taken"}` for failed signups)
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+          example: PGRST301
+        message:
+          type: string
+          example: JWT expired
+        details:
+          type: string
+          nullable: true
+        hint:
+          type: string
+          nullable: true
+
+  # -------------------------------------------------------------------------
+  # Reusable response envelopes
+  # -------------------------------------------------------------------------
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: PGRST301
+            message: JWT expired
+    Forbidden:
+      description: Authenticated but insufficient role
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found (or hidden by RLS)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  # -------------------------------------------------------------------------
+  # Reusable parameters
+  # -------------------------------------------------------------------------
+  parameters:
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 100
+      description: Maximum number of rows to return
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+      description: Number of rows to skip (for pagination)
+    order:
+      name: order
+      in: query
+      schema:
+        type: string
+      description: "Column and direction, e.g. `created_at.desc` or `name.asc`"
+    select:
+      name: select
+      in: query
+      schema:
+        type: string
+      description: "Comma-separated column names to return, e.g. `id,name,price`"
+    preferCount:
+      name: Prefer
+      in: header
+      schema:
+        type: string
+        enum: [count=exact, count=planned, count=estimated]
+      description: |
+        Ask PostgREST to return the total row count in the
+        `Content-Range` response header.
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+
+  /rpc/signup:
+    post:
+      operationId: signup
+      summary: Create a new customer account
+      tags: [Auth]
+      description: |
+        Registers a new user and returns a signed JWT. No authentication required.
+
+        - Password is bcrypt-hashed (cost 8) before storage. The plaintext is never persisted.
+        - `p_suburb` is matched case-insensitively against the `suburbs` table. If no match is found the user is created without a suburb.
+        - On success the event is written to `internal.auth_log` with `event_type = signup`.
+        - On duplicate email the event is logged as `signup` with `details.error = email_taken`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_email, p_password, p_first_name, p_last_name]
+              properties:
+                p_email:
+                  type: string
+                  format: email
+                  example: jane.doe@example.com
+                p_password:
+                  type: string
+                  minLength: 8
+                  example: hunter42!
+                p_first_name:
+                  type: string
+                  example: Jane
+                p_last_name:
+                  type: string
+                  example: Doe
+                p_suburb:
+                  type: string
+                  nullable: true
+                  description: Sydney suburb name (optional). Used to pre-select nearby stores.
+                  example: Newtown
+      responses:
+        "200":
+          description: Account created — JWT ready to use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                user_id: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+        "400":
+          description: Validation error (invalid email, password too short, or email already registered)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidEmail:
+                  summary: Invalid email format
+                  value:
+                    code: P0001
+                    message: Invalid email address
+                passwordTooShort:
+                  summary: Password under 8 characters
+                  value:
+                    code: P0001
+                    message: Password must be at least 8 characters
+                emailTaken:
+                  summary: Email already registered
+                  value:
+                    code: P0002
+                    message: Email already registered
+
+  /rpc/login:
+    post:
+      operationId: login
+      summary: Sign in and receive a JWT
+      tags: [Auth]
+      description: |
+        Verifies credentials and returns a signed JWT valid for **24 hours**.
+
+        - Returns a generic `Invalid email or password` error for both wrong email and wrong password to prevent account enumeration.
+        - Both success and failure events are written to `internal.auth_log`.
+
+        **Demo credentials**
+
+        | Email | Password | Role |
+        |---|---|---|
+        | `demo@slices.com.au` | `password123` | customer |
+        | `staff@slices.com.au` | `password123` | staff |
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_email, p_password]
+              properties:
+                p_email:
+                  type: string
+                  format: email
+                  example: demo@slices.com.au
+                p_password:
+                  type: string
+                  example: password123
+            example:
+              p_email: demo@slices.com.au
+              p_password: password123
+      responses:
+        "200":
+          description: Login successful — JWT ready to use
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                user_id: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+                role: customer
+        "400":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: P0003
+                message: Invalid email or password
+
+  # ── Menu ──────────────────────────────────────────────────────────────────
+
+  /menu:
+    get:
+      operationId: listMenu
+      summary: List all available menu items
+      tags: [Menu]
+      description: |
+        Returns all items where `is_available = true`.
+        Filter by category with `?category=eq.classic`.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/select'
+        - $ref: '#/components/parameters/preferCount'
+        - name: category
+          in: query
+          description: "Filter by category. Example: `?category=eq.vegetarian`"
+          schema:
+            type: string
+            enum: [starter, classic, vegetarian, special]
+        - name: base_price
+          in: query
+          description: "Price filter. Example: `?base_price=lt.20`"
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of menu items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuItem'
+              examples:
+                classics:
+                  summary: Classic pizzas under $20
+                  value:
+                    - id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                      category: classic
+                      name: Margherita
+                      description: San Marzano tomato, fior di latte mozzarella, fresh basil, extra virgin olive oil
+                      base_price: 15.00
+                      is_available: true
+                    - id: b2c3d4e5-f6a7-8901-bcde-f12345678901
+                      category: classic
+                      name: Pepperoni
+                      description: Tomato base, mozzarella, double pepperoni
+                      base_price: 17.00
+                      is_available: true
+
+  /menu_variants:
+    get:
+      operationId: listMenuVariants
+      summary: List size and base combinations for pizza items
+      tags: [Menu]
+      description: |
+        Each pizza menu item has variants covering every combination of size
+        (`personal` → `xl`) and base (`classic`, `thin`, `thick`,
+        `stuffed_crust`, `gluten_free`). Pass `menu_item_id` to get the
+        variants for a specific pizza.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/select'
+        - name: menu_item_id
+          in: query
+          description: "Filter to a single pizza. Example: `?menu_item_id=eq.a1b2c3d4-...`"
+          schema:
+            type: string
+        - name: size
+          in: query
+          schema:
+            type: string
+            enum: [personal, small, medium, large, xl]
+        - name: base
+          in: query
+          schema:
+            type: string
+            enum: [classic, thin, thick, stuffed_crust, gluten_free]
+      responses:
+        "200":
+          description: Array of variants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuVariant'
+              example:
+                - id: c3d4e5f6-a7b8-9012-cdef-123456789012
+                  menu_item_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                  size: large
+                  base: thin
+                  price: 25.00
+
+  /rpc/search_menu:
+    post:
+      operationId: searchMenu
+      summary: Full-text and fuzzy search across the menu
+      tags: [Menu]
+      description: |
+        Searches menu item names and descriptions using:
+        1. **tsvector full-text search** (`websearch_to_tsquery`) — ranked by relevance.
+        2. **Trigram ILIKE fallback** — catches partial matches and typos.
+
+        Results are ordered by full-text rank descending.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [q]
+              properties:
+                q:
+                  type: string
+                  description: Search query (supports natural language, e.g. "spicy prawn" or "gluten free")
+                  example: truffle mushroom
+      responses:
+        "200":
+          description: Matching menu items ordered by relevance
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuItem'
+              example:
+                - id: d4e5f6a7-b8c9-0123-defa-234567890123
+                  category: vegetarian
+                  name: Truffle Mushroom
+                  description: White sauce base, mozzarella, mixed wild mushrooms, truffle oil, rocket, parmesan
+                  base_price: 19.00
+                  is_available: true
+
+  # ── Stores ────────────────────────────────────────────────────────────────
+
+  /stores:
+    get:
+      operationId: listStores
+      summary: List all stores with live open/closed status
+      tags: [Stores]
+      description: |
+        `is_open_now` is computed at query time using `Australia/Sydney` timezone.
+        Filter to only open stores with `?is_open_now=eq.true`.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/select'
+        - name: is_active
+          in: query
+          schema:
+            type: string
+          description: "Example: `?is_active=eq.true`"
+        - name: is_open_now
+          in: query
+          schema:
+            type: string
+          description: "Example: `?is_open_now=eq.true`"
+        - name: suburb
+          in: query
+          schema:
+            type: string
+          description: "Example: `?suburb=eq.Newtown`"
+      responses:
+        "200":
+          description: Array of stores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Store'
+              example:
+                - id: e5f6a7b8-c9d0-1234-efab-345678901234
+                  name: Slices – Surry Hills
+                  address: 142 Crown St, Surry Hills NSW 2010
+                  suburb: Surry Hills
+                  postcode: "2010"
+                  phone: (02) 9111 0001
+                  is_active: true
+                  is_open_now: true
+
+  /store_hours:
+    get:
+      operationId: listStoreHours
+      summary: List weekly trading hours for stores
+      tags: [Stores]
+      description: |
+        Returns one row per store per day of week (ISODOW: 1=Monday, 7=Sunday).
+        Filter by `store_id` to retrieve hours for a single store.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/order'
+        - name: store_id
+          in: query
+          schema:
+            type: string
+          description: "Example: `?store_id=eq.e5f6a7b8-...`"
+        - name: day_of_week
+          in: query
+          schema:
+            type: string
+          description: "ISODOW integer. Example: `?day_of_week=eq.6` for Saturday"
+      responses:
+        "200":
+          description: Array of store hour rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoreHours'
+              example:
+                - store_id: e5f6a7b8-c9d0-1234-efab-345678901234
+                  store_name: Slices – Surry Hills
+                  day_of_week: 6
+                  opens: "11:00"
+                  closes: "23:00"
+                  is_closed: false
+
+  /rpc/stores_near:
+    post:
+      operationId: storesNear
+      summary: Find the nearest stores to a Sydney suburb
+      tags: [Stores]
+      description: |
+        Uses **PostGIS `ST_Distance`** to compute straight-line distance (in
+        metres) between the suburb centroid and each active store location.
+        Results are sorted nearest-first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [suburb]
+              properties:
+                suburb:
+                  type: string
+                  description: Name of a Sydney suburb (case-insensitive)
+                  example: Newtown
+                lim:
+                  type: integer
+                  default: 5
+                  description: Maximum number of stores to return
+                  example: 3
+      responses:
+        "200":
+          description: Stores sorted by distance from the suburb
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NearbyStore'
+              example:
+                - store_id: f6a7b8c9-d0e1-2345-fabc-456789012345
+                  store_name: Slices – Newtown
+                  address: 301 King St, Newtown NSW 2042
+                  distance_m: 124.7
+                - store_id: e5f6a7b8-c9d0-1234-efab-345678901234
+                  store_name: Slices – Surry Hills
+                  address: 142 Crown St, Surry Hills NSW 2010
+                  distance_m: 1843.2
+
+  # ── Orders ────────────────────────────────────────────────────────────────
+
+  /orders:
+    get:
+      operationId: listOrders
+      summary: List orders for the authenticated customer
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      description: |
+        **RLS enforced** — customers only see their own orders.
+        Staff see all orders across all stores.
+
+        Common filters:
+        - `?status=eq.pending`
+        - `?store_id=eq.<uuid>`
+        - `?order=created_at.desc`
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/select'
+        - $ref: '#/components/parameters/preferCount'
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: "Example: `?status=eq.pending` or `?status=in.(pending,processing)`"
+        - name: store_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Order'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /order_items:
+    get:
+      operationId: listOrderItems
+      summary: List line items for the authenticated customer's orders
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      description: |
+        **RLS enforced** — only items belonging to the requesting customer's
+        orders are returned. Filter by `order_id` to retrieve items for a
+        specific order.
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/select'
+        - name: order_id
+          in: query
+          schema:
+            type: string
+          description: "Example: `?order_id=eq.<uuid>`"
+      responses:
+        "200":
+          description: Array of order items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderItem'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /rpc/place_order:
+    post:
+      operationId: placeOrder
+      summary: Place a new pizza order
+      tags: [Orders]
+      security:
+        - bearerAuth: []
+      description: |
+        Creates an order and its line items in a single transaction.
+
+        - The customer's `user_id` is taken from the JWT `sub` claim — do not
+          pass it in the body.
+        - For pizzas, supply a `variant_id` to select size + base. Omit it for
+          starters (price falls back to `base_price`).
+        - `total_amount` is computed server-side; you do not need to calculate it.
+
+        Returns the new order UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_store_id, p_delivery_address, p_items]
+              properties:
+                p_store_id:
+                  type: string
+                  format: uuid
+                  description: The store to fulfil the order
+                  example: e5f6a7b8-c9d0-1234-efab-345678901234
+                p_delivery_address:
+                  type: string
+                  nullable: true
+                  description: Full delivery address. Null for pickup orders.
+                  example: 12 Riley St, Surry Hills NSW 2010
+                p_items:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/PlaceOrderItem'
+            example:
+              p_store_id: e5f6a7b8-c9d0-1234-efab-345678901234
+              p_delivery_address: 12 Riley St, Surry Hills NSW 2010
+              p_items:
+                - item_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                  variant_id: c3d4e5f6-a7b8-9012-cdef-123456789012
+                  quantity: 2
+                  notes: Extra chilli on one
+                - item_id: 11223344-5566-7788-99aa-bbccddeeff00
+                  quantity: 1
+      responses:
+        "200":
+          description: UUID of the newly created order
+          content:
+            application/json:
+              schema:
+                type: string
+                format: uuid
+              example: "9a8b7c6d-5e4f-3210-abcd-ef0987654321"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Back of House ─────────────────────────────────────────────────────────
+
+  /rpc/claim_next_order:
+    post:
+      operationId: claimNextOrder
+      summary: Claim the next pending order for a store (staff only)
+      tags: [Back of House]
+      security:
+        - bearerAuth: []
+      description: |
+        Atomically transitions the **oldest pending order** for the given store
+        from `pending` → `processing` using `FOR UPDATE SKIP LOCKED`.
+
+        Multiple kitchen terminals can call this concurrently — each will
+        receive a different order with no double-processing.
+
+        Returns the order row, or an empty array if there is nothing in the
+        queue.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_store_id]
+              properties:
+                p_store_id:
+                  type: string
+                  format: uuid
+                  description: The store whose queue to pull from
+                  example: e5f6a7b8-c9d0-1234-efab-345678901234
+      responses:
+        "200":
+          description: The claimed order (empty array if queue is empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1
+                items:
+                  $ref: '#/components/schemas/Order'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /rpc/complete_order:
+    post:
+      operationId: completeOrder
+      summary: Mark an order as processed (staff only)
+      tags: [Back of House]
+      security:
+        - bearerAuth: []
+      description: |
+        Transitions an order from `processing` → `processed`.
+        Only orders currently in `processing` state are affected; calling
+        this on an already-processed order is a no-op.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_order_id]
+              properties:
+                p_order_id:
+                  type: string
+                  format: uuid
+                  example: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+      responses:
+        "204":
+          description: Order marked as processed
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Audit ─────────────────────────────────────────────────────────────────
+
+  /audit_log:
+    get:
+      operationId: listAuditLog
+      summary: Browse the full audit trail (staff only)
+      tags: [Audit]
+      security:
+        - bearerAuth: []
+      description: |
+        Returns row-level change records captured by the audit trigger on
+        `users`, `orders`, `order_items`, `menu_items`, and `stores`.
+
+        Records are stored in monthly partitions with **BRIN indexes** on
+        `occurred_at`. For efficient time-range queries, always filter with
+        `occurred_at`:
+
+        ```
+        ?occurred_at=gte.2025-01-01T00:00:00Z&occurred_at=lt.2025-02-01T00:00:00Z
+        ```
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/order'
+        - $ref: '#/components/parameters/preferCount'
+        - name: occurred_at
+          in: query
+          schema:
+            type: string
+          description: "Time-range filter. Example: `?occurred_at=gte.2025-01-01T00:00:00Z`"
+        - name: table_name
+          in: query
+          schema:
+            type: string
+          description: "Example: `?table_name=eq.orders`"
+        - name: operation
+          in: query
+          schema:
+            type: string
+            enum: [INSERT, UPDATE, DELETE, TRUNCATE]
+        - name: app_user_id
+          in: query
+          schema:
+            type: string
+          description: "Filter to a specific user's actions. Example: `?app_user_id=eq.<uuid>`"
+      responses:
+        "200":
+          description: Array of audit entries ordered by `occurred_at` descending
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEntry'
+              example:
+                - id: 1042
+                  occurred_at: "2025-04-19T14:32:01.123456+10:00"
+                  db_user: postgres
+                  app_user_id: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+                  app_role: customer
+                  schema_name: internal
+                  table_name: orders
+                  operation: INSERT
+                  old_data: null
+                  new_data:
+                    id: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+                    status: pending
+                    total_amount: "47.50"
+                  changed_cols: null
+                  txid: 7823
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /auth_log:
+    get:
+      operationId: listAuthLog
+      summary: Browse signup and login events (staff only)
+      tags: [Audit]
+      security:
+        - bearerAuth: []
+      description: |
+        Returns all authentication events — signups, successful logins, and
+        failed login attempts — ordered by `occurred_at` descending.
+
+        Stored in monthly BRIN-indexed partitions. Always filter by
+        `occurred_at` for efficient range queries:
+        ```
+        ?occurred_at=gte.2025-01-01T00:00:00Z&occurred_at=lt.2025-02-01T00:00:00Z
+        ```
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+        - $ref: '#/components/parameters/preferCount'
+        - name: occurred_at
+          in: query
+          schema:
+            type: string
+          description: "Time-range filter. Example: `?occurred_at=gte.2025-01-01T00:00:00Z`"
+        - name: event_type
+          in: query
+          schema:
+            type: string
+          description: "Example: `?event_type=eq.login_failure`"
+        - name: email
+          in: query
+          schema:
+            type: string
+          description: "Example: `?email=eq.demo@slices.com.au`"
+        - name: user_id
+          in: query
+          schema:
+            type: string
+          description: "Example: `?user_id=eq.<uuid>`"
+      responses:
+        "200":
+          description: Auth log entries ordered by `occurred_at` descending
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuthLogEntry'
+              example:
+                - id: 3
+                  occurred_at: "2025-04-19T15:01:22.456789+10:00"
+                  event_type: login_success
+                  email: demo@slices.com.au
+                  user_id: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+                  ip_addr: 172.18.0.1
+                  details: null
+                - id: 2
+                  occurred_at: "2025-04-19T15:00:55.123456+10:00"
+                  event_type: login_failure
+                  email: demo@slices.com.au
+                  user_id: null
+                  ip_addr: 172.18.0.1
+                  details:
+                    error: invalid_credentials
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+
+  /rpc/order_audit:
+    post:
+      operationId: orderAudit
+      summary: Full audit history for a single order (staff only)
+      tags: [Audit]
+      security:
+        - bearerAuth: []
+      description: |
+        Returns all audit log entries related to a given order UUID, ordered
+        chronologically. Useful for tracing the full lifecycle of an order
+        from placement through to completion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [p_order_id]
+              properties:
+                p_order_id:
+                  type: string
+                  format: uuid
+                  example: 9a8b7c6d-5e4f-3210-abcd-ef0987654321
+      responses:
+        "200":
+          description: Chronological audit entries for the order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEntry'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'

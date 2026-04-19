@@ -1,0 +1,11 @@
+{
+  "name": "pg-ultra-pro-max-scripts",
+  "version": "1.0.0",
+  "description": "Load-test and utility scripts",
+  "scripts": {
+    "load-test": "node load-test.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}

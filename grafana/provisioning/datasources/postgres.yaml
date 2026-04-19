@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    uid: pizza-postgres
+    url: db:5432
+    user: postgres
+    isDefault: true
+    editable: true
+    secureJsonData:
+      password: postgres
+    jsonData:
+      database: pizza
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false

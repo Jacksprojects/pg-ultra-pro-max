@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Slices — Sign In</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f7f7f7;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #222;
+    }
+
+    .auth-container {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      width: 100%;
+      max-width: 420px;
+      padding: 40px 36px 36px;
+    }
+
+    .brand {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .brand h1 {
+      font-size: 2rem;
+      color: #e63946;
+      font-weight: 800;
+      letter-spacing: -1px;
+    }
+    .brand p {
+      color: #666;
+      font-size: 0.95rem;
+      margin-top: 4px;
+    }
+
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      border-bottom: 2px solid #eee;
+      margin-bottom: 28px;
+    }
+    .tab-btn {
+      flex: 1;
+      background: none;
+      border: none;
+      padding: 10px 0 12px;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #999;
+      cursor: pointer;
+      position: relative;
+      transition: color 0.2s;
+    }
+    .tab-btn.active {
+      color: #e63946;
+    }
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -2px;
+      left: 0; right: 0;
+      height: 2px;
+      background: #e63946;
+      border-radius: 2px 2px 0 0;
+    }
+
+    /* Forms */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #444;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      font-size: 1rem;
+      outline: none;
+      transition: border-color 0.2s;
+      background: #fafafa;
+    }
+    .form-group input:focus {
+      border-color: #e63946;
+      background: #fff;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: #e63946;
+      color: #fff;
+    }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #444;
+      margin-top: 10px;
+    }
+    .btn-secondary:hover { background: #e5e5e5; }
+
+    .error-msg {
+      background: #fff0f0;
+      color: #c0392b;
+      border: 1px solid #f5c6c6;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .error-msg.visible { display: block; }
+
+    .optional-label {
+      font-size: 0.75rem;
+      color: #aaa;
+      font-weight: 400;
+    }
+
+    @media (max-width: 480px) {
+      body { align-items: flex-start; padding: 20px 12px; }
+      .auth-container { padding: 28px 20px 24px; }
+      .form-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="auth-container">
+  <div class="brand">
+    <h1>🍕 Slices</h1>
+    <p>Sydney's favourite pizza delivery</p>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-signin" onclick="switchAuthTab('signin')">Sign In</button>
+    <button class="tab-btn"        id="tab-signup" onclick="switchAuthTab('signup')">Sign Up</button>
+  </div>
+
+  <!-- Sign In Panel -->
+  <div class="tab-panel active" id="panel-signin">
+    <div class="error-msg" id="signin-error"></div>
+
+    <div class="form-group">
+      <label for="signin-email">Email</label>
+      <input type="email" id="signin-email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="form-group">
+      <label for="signin-password">Password</label>
+      <input type="password" id="signin-password" placeholder="••••••••" autocomplete="current-password" />
+    </div>
+
+    <button class="btn btn-primary" onclick="doSignIn()">Sign In</button>
+    <button class="btn btn-secondary" onclick="useDemoAccount()">Use demo account</button>
+  </div>
+
+  <!-- Sign Up Panel -->
+  <div class="tab-panel" id="panel-signup">
+    <div class="error-msg" id="signup-error"></div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="signup-first">First name</label>
+        <input type="text" id="signup-first" placeholder="Jane" autocomplete="given-name" />
+      </div>
+      <div class="form-group">
+        <label for="signup-last">Last name</label>
+        <input type="text" id="signup-last" placeholder="Smith" autocomplete="family-name" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="signup-email">Email</label>
+      <input type="email" id="signup-email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="form-group">
+      <label for="signup-password">Password</label>
+      <input type="password" id="signup-password" placeholder="Min 8 characters" autocomplete="new-password" />
+    </div>
+    <div class="form-group">
+      <label for="signup-suburb">Suburb <span class="optional-label">(optional)</span></label>
+      <input type="text" id="signup-suburb" placeholder="e.g. Newtown" />
+    </div>
+
+    <button class="btn btn-primary" onclick="doSignUp()">Create Account</button>
+  </div>
+</div>
+
+<script>
+  const API = 'http://localhost:3000';
+
+  // ── If already logged in, skip to app ───────────────────────────────────────
+  if (localStorage.getItem('pizza_token')) {
+    window.location.replace('app.html');
+  }
+
+  // ── Tab switching ────────────────────────────────────────────────────────────
+  function switchAuthTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    document.getElementById('panel-' + tab).classList.add('active');
+  }
+
+  // ── Demo account pre-fill ────────────────────────────────────────────────────
+  function useDemoAccount() {
+    document.getElementById('signin-email').value    = 'demo@slices.com.au';
+    document.getElementById('signin-password').value = 'password123';
+  }
+
+  // ── Show error helper ────────────────────────────────────────────────────────
+  function showError(elId, msg) {
+    const el = document.getElementById(elId);
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+  function clearError(elId) {
+    const el = document.getElementById(elId);
+    el.textContent = '';
+    el.classList.remove('visible');
+  }
+
+  // ── Store auth result and redirect ──────────────────────────────────────────
+  function handleAuthSuccess(data) {
+    localStorage.setItem('pizza_token',   data.token);
+    localStorage.setItem('pizza_user_id', data.user_id);
+    window.location.replace('app.html');
+  }
+
+  // ── Sign In ──────────────────────────────────────────────────────────────────
+  async function doSignIn() {
+    clearError('signin-error');
+    const email    = document.getElementById('signin-email').value.trim();
+    const password = document.getElementById('signin-password').value;
+
+    if (!email || !password) {
+      showError('signin-error', 'Please enter your email and password.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API}/rpc/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ p_email: email, p_password: password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showError('signin-error', data.message || data.hint || 'Sign in failed. Check your credentials.');
+        return;
+      }
+
+      handleAuthSuccess(data);
+    } catch (err) {
+      showError('signin-error', 'Could not connect to the server. Please try again.');
+    }
+  }
+
+  // ── Sign Up ──────────────────────────────────────────────────────────────────
+  async function doSignUp() {
+    clearError('signup-error');
+    const firstName = document.getElementById('signup-first').value.trim();
+    const lastName  = document.getElementById('signup-last').value.trim();
+    const email     = document.getElementById('signup-email').value.trim();
+    const password  = document.getElementById('signup-password').value;
+    const suburb    = document.getElementById('signup-suburb').value.trim();
+
+    if (!firstName || !lastName || !email || !password) {
+      showError('signup-error', 'Please fill in all required fields.');
+      return;
+    }
+    if (password.length < 8) {
+      showError('signup-error', 'Password must be at least 8 characters.');
+      return;
+    }
+
+    const body = {
+      p_email:      email,
+      p_password:   password,
+      p_first_name: firstName,
+      p_last_name:  lastName,
+    };
+    if (suburb) body.p_suburb = suburb;
+
+    try {
+      const res = await fetch(`${API}/rpc/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showError('signup-error', data.message || data.hint || 'Sign up failed. That email may already be registered.');
+        return;
+      }
+
+      handleAuthSuccess(data);
+    } catch (err) {
+      showError('signup-error', 'Could not connect to the server. Please try again.');
+    }
+  }
+
+  // Allow pressing Enter to submit
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const activePanel = document.querySelector('.tab-panel.active').id;
+    if (activePanel === 'panel-signin') doSignIn();
+    else doSignUp();
+  });
+</script>
+</body>
+</html>

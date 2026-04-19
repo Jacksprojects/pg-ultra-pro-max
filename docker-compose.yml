@@ -1,0 +1,150 @@
+services:
+  db:
+    build: .
+    restart: unless-stopped
+    # pgaudit must be in shared_preload_libraries before the cluster starts
+    command: >
+      postgres
+        -c shared_preload_libraries=pgaudit
+        -c pgaudit.log=ddl,role,write
+        -c pgaudit.log_catalog=off
+        -c pgaudit.log_relation=on
+        -c pgaudit.log_statement_once=off
+        -c log_timezone=Australia/Sydney
+        -c app.settings.jwt_secret=${JWT_SECRET:-super-secret-jwt-key-change-in-production}
+    environment:
+      POSTGRES_DB: pizza
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      TZ: Australia/Sydney
+      PGTZ: Australia/Sydney
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pizza"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgrest:
+    image: postgrest/postgrest:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:authenticator_pass@db:5432/pizza
+      PGRST_DB_SCHEMA: api
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_JWT_SECRET: "${JWT_SECRET:-super-secret-jwt-key-change-in-production}"
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    ports:
+      - "3000:3000"
+
+  web:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+
+  swagger:
+    image: swaggerapi/swagger-ui:latest
+    restart: unless-stopped
+    depends_on:
+      - postgrest
+    environment:
+      SWAGGER_JSON: /openapi.yaml
+      # Pre-fill the server URL so "Try it out" points straight at PostgREST
+      API_URL: /openapi.yaml
+      BASE_URL: /
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./openapi.yaml:/openapi.yaml:ro
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8090:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+      ADMINER_DESIGN: pepa-linha-dark
+
+  # Exports Postgres internal metrics in Prometheus format
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:postgres@db:5432/pizza?sslmode=disable
+
+  # Exports per-container CPU, memory, and network metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart: unless-stopped
+    privileged: true
+    # Docker socket is required so cAdvisor can read container names and labels.
+    # Without it, metrics only have cgroup IDs and no human-readable identifiers.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    command:
+      - '--docker_only=true'   # skip host-level cgroup noise, containers only
+
+  # Scrapes postgres_exporter + cadvisor — open http://localhost:9090
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres_exporter
+      - cadvisor
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+
+  # Queue monitor — open http://localhost:3001
+  # Similar to Flower for Celery: real-time queue depth, throughput, and
+  # per-store breakdown with 5-second auto-refresh.
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+
+volumes:
+  pgdata:
+  grafana_data:
+  prometheus_data:

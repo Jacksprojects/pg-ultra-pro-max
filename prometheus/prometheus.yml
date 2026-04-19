@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # PostgreSQL internals — connections, cache hit, transactions, locks, I/O
+  - job_name: postgres_exporter
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+
+  # Container-level CPU, memory, network for every service in the stack
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['cadvisor:8080']
