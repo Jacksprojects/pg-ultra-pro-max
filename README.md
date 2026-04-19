@@ -1,6 +1,21 @@
 # PostgreSQL Ultra Pro Max
 
-A proof-of-concept pizza ordering app that uses PostgreSQL exclusively for all functionality — no application-layer middleware, no external services except PostgREST.
+A proof-of-concept app that uses PostgreSQL exclusively for all functionality — no application-layer, middleware or external services.
+Just two html pages and postgres allows you to order pizzas with over 200 transactions per second.
+
+## Features
+
+- **REST API** — PostgREST exposes the `api` schema directly as a JSON REST API. No hand-written HTTP layer.
+- **Order queue (SKIP LOCKED)** — Staff claim the next pending order atomically with `FOR UPDATE SKIP LOCKED`, preventing double-processing under concurrent load.
+- **PostGIS nearest-store lookup** — `api.stores_near(suburb)` finds the closest stores to a suburb name using `ST_Distance` on `GEOGRAPHY(POINT, 4326)` columns.
+- **Full-text search** — `TSVECTOR` generated columns on menu items (weighted A/B), trigram (`pg_trgm`) indexes for fuzzy matching, and `websearch_to_tsquery` for natural-language search via `api.search_menu(q)`.
+- **Row-Level Security** — Customers see only their own orders and items. Staff see all. PostgREST JWT claims are used to identify the requesting user.
+- **Audit logging (pgaudit + trigger)** — Two-layer audit system: pgaudit logs all DDL/role/write statements to `pg_log`; a row-level trigger captures before/after JSONB snapshots into `internal.audit_log` for every change to users, orders, order items, menu items, and stores.
+- **BRIN indexes** — Audit log timestamps use BRIN indexes (`pages_per_range=128`) which are orders of magnitude smaller than B-tree for append-only, time-ordered tables.
+- **Monthly partitioning** — `internal.audit_log` is range-partitioned by month. `internal.create_next_audit_partition()` rolls the window forward.
+- **Opening hours** — Per-store, per-day open/close times with an `is_store_open()` function evaluated in `Australia/Sydney` timezone.
+- **Auth event logging** — Signup and login attempts (success and failure) are recorded in `internal.auth_log`, partitioned by month. Staff can query the full auth history via `GET /auth_log`.
+- **Observability stack** — Prometheus scrapes `postgres_exporter` (internal DB metrics) and `cAdvisor` (container resource usage). Grafana ships a pre-provisioned queue-depth dashboard with a direct PostgreSQL datasource, auto-refreshing every 5 seconds.
 
 ## Stack
 
@@ -16,20 +31,6 @@ A proof-of-concept pizza ordering app that uses PostgreSQL exclusively for all f
 | cAdvisor | latest | Per-container CPU, memory, and network metrics |
 | Prometheus | latest | Metrics scraping and storage |
 | Grafana | latest | Queue monitor dashboard and observability UI |
-
-## Features
-
-- **REST API** — PostgREST exposes the `api` schema directly as a JSON REST API. No hand-written HTTP layer.
-- **Order queue (SKIP LOCKED)** — Staff claim the next pending order atomically with `FOR UPDATE SKIP LOCKED`, preventing double-processing under concurrent load.
-- **PostGIS nearest-store lookup** — `api.stores_near(suburb)` finds the closest stores to a suburb name using `ST_Distance` on `GEOGRAPHY(POINT, 4326)` columns.
-- **Full-text search** — `TSVECTOR` generated columns on menu items (weighted A/B), trigram (`pg_trgm`) indexes for fuzzy matching, and `websearch_to_tsquery` for natural-language search via `api.search_menu(q)`.
-- **Row-Level Security** — Customers see only their own orders and items. Staff see all. PostgREST JWT claims are used to identify the requesting user.
-- **Audit logging (pgaudit + trigger)** — Two-layer audit system: pgaudit logs all DDL/role/write statements to `pg_log`; a row-level trigger captures before/after JSONB snapshots into `internal.audit_log` for every change to users, orders, order items, menu items, and stores.
-- **BRIN indexes** — Audit log timestamps use BRIN indexes (`pages_per_range=128`) which are orders of magnitude smaller than B-tree for append-only, time-ordered tables.
-- **Monthly partitioning** — `internal.audit_log` is range-partitioned by month. `internal.create_next_audit_partition()` rolls the window forward.
-- **Opening hours** — Per-store, per-day open/close times with an `is_store_open()` function evaluated in `Australia/Sydney` timezone.
-- **Auth event logging** — Signup and login attempts (success and failure) are recorded in `internal.auth_log`, partitioned by month. Staff can query the full auth history via `GET /auth_log`.
-- **Observability stack** — Prometheus scrapes `postgres_exporter` (internal DB metrics) and `cAdvisor` (container resource usage). Grafana ships a pre-provisioned queue-depth dashboard with a direct PostgreSQL datasource, auto-refreshing every 5 seconds.
 
 ## Schema
 
